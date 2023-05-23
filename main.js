@@ -2,13 +2,28 @@ import MyOpenAIApi from "./openai.js";
 import fs from "fs";
 import { getHTML, extractTextFromHTML } from "./treatHTML.js";
 
-async function urlToFeature(url, object, name) {
-  let html = await getHTML(url);
+function writeError(name, number) {
+  fs.appendFile(
+    "./article.txt",
+    number + "." + name + "\nエラーが起きました\n\n",
+    (err) => {
+      if (err) throw err;
+    }
+  );
+}
+
+async function urlToFeature(url, object, name, number) {
+  let html = await getHTML(url).catch(() => {
+    writeError(name, number);
+    return null;
+  });
+  if (html === null) {
+    return null;
+  }
   let text = extractTextFromHTML(html);
   console.log("情報の文字数:" + text.length);
-  if (text.length > 3000)
-  {
-	return "情報が多すぎて、特徴が駐質できませんでした。"
+  if (text.length > 4300) {
+    return null;
   }
   const content = `# 命令\n以下のテキストは${object}の${name}の情報が掲載されているサイトのテキストです。${name}の特徴を教えてください。\n# テキスト\n${text}`;
   const response = await MyOpenAIApi.createChatCompletion({
@@ -25,20 +40,27 @@ async function featureToText(feature, object, name, number, length) {
   const response = await MyOpenAIApi.createChatCompletion({
     model: "gpt-4",
     messages: [{ role: "user", content: content }],
+  }).catch(() => {
+    return MyOpenAIApi.createChatCompletion({
+      model: "gpt-4",
+      messages: [{ role: "user", content: content }],
+    });
   });
   return response.data.choices[0].message.content;
 }
 
 async function writeArticle(url, object, number, length, name) {
-  const feature = await urlToFeature(url, object, name);
+  const feature = await urlToFeature(url, object, name, number);
+  if (feature === null) {
+    return;
+  }
   const text = await featureToText(feature, object, name, number, length);
 
-  const content =
-    text + "\n\n";
-	console.log("記事\n" + content);
-	fs.appendFile('./article.txt', content, (err) => {
-		if (err) throw err;
-	});
+  const content = text + "\n\n";
+  console.log("記事\n" + content);
+  fs.appendFile("./article.txt", content, (err) => {
+    if (err) throw err;
+  });
 }
 
 const path = process.argv.slice(2)[0];
@@ -56,8 +78,12 @@ fs.readFile(path, "utf8", async function (err, data) {
     let url = lines[i].split(",")[0];
     let number = lines[i].split(",")[1];
     let name = lines[i].split(",")[2];
-	console.log("now target is: " + number + "." + name)
+    if (url === "null") {
+      writeError(name, number);
+      continue;
+    }
+    console.log("now target is: " + number + "." + name);
     await writeArticle(url, object, number, length, name);
-	console.log("--------------------")
+    console.log("--------------------");
   }
 });
